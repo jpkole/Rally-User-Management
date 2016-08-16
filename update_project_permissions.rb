@@ -18,6 +18,22 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 # THE SOFTWARE.
 
+# ===================================================================== #
+# SCRIPT:
+#       update_project_permissions.rb
+#
+# PRUPOSE:
+#       Update Permissions for all non-Admin users already existing in
+#       a Project, to an updated value of interest.
+# USAGE:
+#       ruby  update_project_permissions.rb  <project>  <permission>
+#
+#       <project>       - A CA-Rally Project Name or Project ObjectID
+#                         in cases where the are duplicate names.
+#       <permission>    - The new permission to be granted. Allowed:
+#                           Admin, Editor, Viewer, No Access
+# ===================================================================== #
+
 #include for rally json library gem
 require 'rally_api'
 require 'csv'
