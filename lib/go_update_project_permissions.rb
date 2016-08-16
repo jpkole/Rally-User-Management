@@ -234,20 +234,20 @@ def go_update_project_permissions(project_identifier, new_permission)
 
   # Caching Users can help performance if we're doing updates for a lot of users
   if $enable_jp_redis_user_cache
-    @logger.info "Caching user list via redis..."
+    @logger.info "Caching user list via http://redis.io/"
     @uh.cache_users()
   else
     if $enable_user_cache
-      @logger.info "Caching user list..."
+      @logger.info "Caching user list via Ruby Hash"
       @uh.cache_users()
     end
   end
 
   # Check Permission type string to see if its valid
   if !is_permission_valid(new_permission) then
-      @logger.error "Invalid permission string specified. Must be one of: "
-      @logger.error $valid_roles.join(", ")
-      @logger.error "Exiting..."
+      @logger.error "Invalid permission string specified: '#{new_permission}'"
+      @logger.error "\tMust be one of: #{$valid_roles}"
+      @logger.error "\tExiting..."
       log_file.close
       return
   end
@@ -284,7 +284,7 @@ def go_update_project_permissions(project_identifier, new_permission)
   # All checks passed. Proceed...
   project_oid = project["ObjectID"]
 
-  project_users = @uh.get_project_users(project_oid)
+  project_users = @uh.get_project_users(project_oid,project_name)
   number_found = project_users.length
   @logger.info "Found #{number_found} users for project #{project_name}."
 
