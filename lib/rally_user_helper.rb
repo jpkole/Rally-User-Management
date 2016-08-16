@@ -23,6 +23,8 @@ module RallyUserManagement
   require 'rally_api'
   require 'pp'
   require 'date'
+  require 'newrelic_rpm'          # get RSS for process
+  require 'get_process_mem'  # get RSS
 
   class UserHelper
 
@@ -87,47 +89,69 @@ module RallyUserManagement
       @initial_user_fetch            = "UserName,FirstName,LastName,DisplayName"
       @detail_user_fetch             = "UserName,FirstName,LastName,DisplayName,UserPermissions,Name,Role,Workspace,ObjectID,Project,ObjectID,TeamMemberships,UserProfile,SubscriptionAdmin"
 
-      if $enable_jp_redis_user_cache
-        @logger.info "Using redis.io for user cache..."
-        begin
-          redis_gem = 'redis'
-          require redis_gem
-        rescue Exception => ex
-          if ex.message == 'cannot load such file -- #{redis_gem}'
-            puts "ERROR: This code requires the '#{redis_gem}' Ruby Gem to be installed and running,"
-            puts "       because variable '$enable_jp_redis_user_cache' is set to TRUE in file 'my_vars.rb'."
-          else
-            puts ex
-          end
-          exit
-        end
-
-        # Instatiate a redis object
-        @jp_redis_user_cache = Redis.new
-
-        # Is the redis server really up and running?
-        begin
-          response = @jp_redis_user_cache.ping
-        rescue Exception => ex
-          if ex.message == 'Error connecting to Redis on 127.0.0.1:6379 (Errno::ECONNREFUSED)'
-            puts "ERROR: This code requires the Redis server to be installed and running, because"
-            puts "       variable '$enable_jp_redis_user_cache' is set to TRUE in file 'my_vars.rb'."
-            puts "       Please see 'http://redis.io/topics/quickstart' for documentation."
-            puts "       (or run '(cd ./redis-3.2.0; ./src/redis-server )&'"
-          end
-          exit
-        end
-      end
-
+      user_cache_setup()
     end
 
-    def get_cached_users()
+    def user_cache_setup()
+      if !$enable_jp_redis_user_cache
+        @cached_users = {}
+        return
+      end
+
+      # Setup Redis.io cache
+      @logger.info "Setting up redis.io for user cache..."
+      begin
+        redis_gem = 'redis'
+        require redis_gem
+      rescue Exception => ex
+        if ex.message == 'cannot load such file -- #{redis_gem}'
+          puts "ERROR: This code requires the '#{redis_gem}' Ruby Gem to be installed and running,"
+          puts "       because variable '$enable_jp_redis_user_cache' is set to TRUE in file 'my_vars.rb'."
+        else
+          puts ex
+        end
+        exit
+      end
+
+      # Instatiate a redis object
+      @jp_redis_user_cache = Redis.new
+
+      # Is the redis server really up and running?
+      begin
+        response = @jp_redis_user_cache.ping
+      rescue Exception => ex
+        if ex.message == 'Error connecting to Redis on 127.0.0.1:6379 (Errno::ECONNREFUSED)'
+          puts "ERROR: This code requires the Redis server to be installed and running, because"
+          puts "       variable '$enable_jp_redis_user_cache' is set to TRUE in file 'my_vars.rb'."
+          puts "       Please see 'http://redis.io/topics/quickstart' for documentation."
+          puts "       (or run '(cd ./redis-3.2.0; ./src/redis-server )&'"
+        end
+        exit
+      end
+    end
+
+    # Return ALL cached users.
+    def user_cache_get_all()
       if $enable_jp_redis_user_cache
         return @jp_redis_user_cache.keys('*')
       else
         return @cached_users
       end
     end
+
+    # Return a single cached user.
+    def user_cache_get(name)
+      if $enable_jp_redis_user_cache
+        if @jp_redis_user_cache.exists(name.downcase)
+          return @jp_redis_user_cache.get(name.downcase)
+        end  
+      else 
+        if @cached_users.has_key?(name.downcase)
+          return @cached_users[name.downcase]
+        end  
+      end  
+      return nil
+    end  
 
     def get_cached_workspaces()
       return @cached_workspaces
@@ -151,29 +175,24 @@ module RallyUserManagement
 
     # Helper methods
     # Does the user exist? If so, return the user, if not return nil
-    # Need to downcase the name since user names are downcased when created. Without downcase, we would not be
-    #  able to find 'Mark@acme.com'
+    # Need to downcase the name since user names are downcased when created.
+    # Without downcase, we would not be able to find 'Mark@acme.com'
     def find_user(name)
       if ( name.downcase != name )
         @logger.info "Looking for #{name.downcase} instead of #{name}"
       end
 
-      if $enable_jp_redis_user_cache
-        if @jp_redis_user_cache.exists(name.downcase)
-          return @jp_redis_user_cache.get(name.downcase)
-        end
-      else
-        if @cached_users.has_key?(name.downcase)
-          return @cached_users[name.downcase]
-        end
+      this_user = user_cache_get(name)
+      if !this_user.nil?
+        return this_user
       end
-
-      single_user_query = RallyAPI::RallyQuery.new()
-      single_user_query.type = :user
-      single_user_query.fetch = @detail_user_fetch
-      single_user_query.page_size = 200 #optional - default is 200
-      single_user_query.limit = 90000 #optional - default is 99999
-      single_user_query.order = "UserName Asc"
+      
+      single_user_query             = RallyAPI::RallyQuery.new()
+      single_user_query.type        = :user
+      single_user_query.fetch       = @detail_user_fetch
+      single_user_query.page_size   = 200 #optional - default is 200
+      single_user_query.limit       = 90000 #optional - default is 99999
+      single_user_query.order       = "UserName Asc"
       single_user_query.query_string = "(UserName = \"" + name + "\")"
 
       query_results = @rally.find(single_user_query)
@@ -183,13 +202,8 @@ module RallyUserManagement
       else
         # Cache user for use next time
         this_user = query_results.first
-        if $enable_jp_redis_user_cache
-          @jp_redis_user_cache.set(this_user["UserName"].downcase, this_user)
-        else
-          @cached_users[this_user["UserName"].downcase] = this_user
-        end
-        @logger.info "Cached User: #{this_user.UserName}"
-
+        user_cache_set(this_user)
+        #@logger.info "Cached User: #{this_user.UserName}"
         return this_user
       end
     end
@@ -211,11 +225,7 @@ module RallyUserManagement
       else
         # Cache user for use next time
         this_user = query_results.first
-        if $enable_jp_redis_user_cache
-          @jp_redis_user_cache.set(this_user["UserName"].downcase, this_user)
-        else
-          @cached_users[this_user["UserName"].downcase] = this_user
-        end
+        user_cache_set(this_user)
         @logger.info "Refreshed cached User: #{this_user.UserName}"
 
         return this_user
@@ -245,30 +255,38 @@ module RallyUserManagement
     #added for performance
     def cache_users()
 
-      user_query = RallyAPI::RallyQuery.new()
-      user_query.type = :user
-      user_query.fetch = @initial_user_fetch
-      user_query.page_size = 200 #optional - default is 200
-      user_query.limit = 90000 #optional - default is 99999
-      user_query.order = "UserName Asc"
+      user_query            = RallyAPI::RallyQuery.new()
+      user_query.type       = :user
+      user_query.fetch      = @initial_user_fetch
+      user_query.page_size  = 200 #optional - default is 200
+      user_query.limit      = 90000 #optional - default is 99999
+      user_query.order      = "UserName Asc"
 
-        # Filter for enabled only
+      # Filter for enabled only
       if @summarize_enabled_only then
         user_query.query_string = @enabled_only_filter
-        number_found_suffix = "Enabled Users."
+        number_found_suffix = "Enabled Users"
       else
-        number_found_suffix = "Users."
+        number_found_suffix = "Users"
       end
 
+      @logger.info "Querying for #{number_found_suffix}"
       initial_query_results = @rally.find(user_query)
 
       number_users = initial_query_results.total_result_count
       count = 1
       notify_increment = 25
       @cached_users = {}
+      start_time = Time.now
       initial_query_results.each do | initial_user |
-        notify_remainder=count%notify_increment
-        if notify_remainder==0 then @logger.info "Cached #{count} of #{number_users} #{number_found_suffix}" end
+        if count%notify_increment == 0
+          msg = "Cached #{count} of #{number_users} #{number_found_suffix}"
+          msg += ", Elapsed=#{(Time.now-start_time).round(2)} secs"
+          msg += ", RSS=#{NewRelic::Agent::Samplers::MemorySampler.new.sampler.get_sample.round(2)} mb"
+          mem = GetProcessMem.new
+          msg += ", RSS=#{mem.mb.round(2)} mb"
+          @logger.info msg
+        end
 
         # Follow-up user-by-user query of Rally for Detailed User Properties
         user_query.fetch = @detail_user_fetch
@@ -286,11 +304,7 @@ module RallyUserManagement
         number_found = detail_user_query_results.total_result_count
         if number_found > 0 then
           this_user = detail_user_query_results.first
-          if $enable_jp_redis_user_cache
-            @jp_redis_user_cache.set(this_user.UserName, this_user)
-          else
-            @cached_users[this_user.UserName] = this_user
-          end
+          user_cache_set(this_user)
           count+=1
         else
           @logger.warn "User: #{this_user_name} not found in follow-up query. Skipping..."
@@ -298,8 +312,23 @@ module RallyUserManagement
         end
 
       end
-      @logger.info "Cached #{count} users"
+      @logger.info "Cached #{count} users (#{(Time.now-start_time).round(2)} seconds)"
     end
+
+    def user_cache_set(this_user)
+      if $enable_jp_redis_user_cache
+        @jp_redis_user_cache.set(this_user["UserName"].downcase, this_user)
+        @logger.info "Cached User via Redis: #{this_user.UserName}"
+        return
+      end
+      if $enable_user_cache
+        @cached_users[this_user["UserName"].downcase] = this_user
+        @logger.info "Cached User via Ruby Hash: #{this_user.UserName}"
+        return
+      end  
+      @logger.info "User NOT Cached: #{this_user.UserName}"
+    end  
+
 
     def find_workspace(object_id)
       if @cached_workspaces.has_key?(object_id)
@@ -1355,21 +1384,17 @@ module RallyUserManagement
       end
 
       # Grab full object of the created user and return so that we can use it later
-      new_user_query = RallyAPI::RallyQuery.new()
-      new_user_query.type = :user
-      new_user_query.fetch = "UserName,FirstName,LastName,DisplayName,UserPermissions,Name,Role,Workspace,ObjectID,Project,ObjectID,TeamMemberships"
-      new_user_query.query_string = "(UserName = \"#{user_name.downcase}\")"
-      new_user_query.order = "UserName Asc"
+      new_user_query                = RallyAPI::RallyQuery.new()
+      new_user_query.type           = :user
+      new_user_query.fetch          = "UserName,FirstName,LastName,DisplayName,UserPermissions,Name,Role,Workspace,ObjectID,Project,ObjectID,TeamMemberships"
+      new_user_query.query_string   = "(UserName = \"#{user_name.downcase}\")"
+      new_user_query.order          = "UserName Asc"
 
       query_results = @rally.find(new_user_query)
       new_user_created = query_results.first
 
       # Cache the new user
-      if $enable_jp_redis_user_cache
-        @jp_redis_user_cache.set(user_name.downcase, new_user_created)
-      else
-        @cached_users[user_name.downcase] = new_user_created
-      end
+      user_cache_set(new_user_name)
       return new_user_created
     end
 
@@ -1387,21 +1412,17 @@ module RallyUserManagement
       end
 
       # Grab full object of the created user and return so that we can use it later
-      updated_user_query = RallyAPI::RallyQuery.new()
-      updated_user_query.type = :user
-      updated_user_query.fetch = "UserName,FirstName,LastName,DisplayName,UserPermissions,Name,Role,Workspace,ObjectID,Project,ObjectID,TeamMemberships"
+      updated_user_query            = RallyAPI::RallyQuery.new()
+      updated_user_query.type       = :user
+      updated_user_query.fetch      = "UserName,FirstName,LastName,DisplayName,UserPermissions,Name,Role,Workspace,ObjectID,Project,ObjectID,TeamMemberships"
       updated_user_query.query_string = "(UserName = \"#{user_name.downcase}\")"
-      updated_user_query.order = "UserName Asc"
+      updated_user_query.order      = "UserName Asc"
 
       query_results = @rally.find(updated_user_query)
       updated_user_object = query_results.first
 
       # Cache the new user
-      if $enable_jp_redis_user_cache
-        @jp_redis_user_cache.set(user_name.downcase, updated_user_object)
-      else
-        @cached_users[user_name.downcase] = updated_user_object
-      end
+      user_cache_set(updated_user_object)
       return
     end
 
@@ -1539,12 +1560,12 @@ module RallyUserManagement
     # Note - this utilizes un-documented and un-supported Rally endpoint
     # that is not part of WSAPI REST. It also digs down into rally_api to
     # directly GET against this endpoint. This is not guaranteed to work forever
-    def get_project_users(project_oid)
+    def get_project_users(project_oid,project_name)
+        @logger.info "Get users for Project OID='#{project_oid}' (Name='#{project_name}')" 
         project_users_url = make_project_users_url(project_oid)
         args = {:method => :get}
         params = {:fetch => "UserName", :order=> "UserName ASC"}
         results_json = @rally_json_connection.get_all_json_results(project_users_url, args, params, limit = 99999)
-
         these_project_users = []
         results = results_json["QueryResult"]["Results"]
         results.each do | this_user_hash |
@@ -1580,22 +1601,11 @@ module RallyUserManagement
       use_cache = false
 
       # first try to lookup against cached user list -- much faster than re-querying Rally
-      if $enable_jp_redis_user_cache
-        if @jp_redis_user_cache.exists(user.UserName) then use_cache = true end
-      else
-        if @cached_users != nil then
-          if @cached_users.has_key?(user.UserName) then use_cache = true end
-        end
-      end
+      this_user = user_cache_get(user)
+      if !this_user.nil? then use_cache = true end
 
       # first try to lookup against cached user list -- much faster than re-querying Rally
       if use_cache then
-
-        if $enable_jp_redis_user_cache
-          this_user = @jp_redis_user_cache.get(user.UserName)
-        else
-          this_user = @cached_users[user.UserName]
-        end
 
         # loop through permissions and look to see if there's an existing permission for this
         # workspace, and if so, has it changed
@@ -1610,7 +1620,7 @@ module RallyUserManagement
         end
 
       else # Cache does not exist or user isn't in it - query info from Rally
-        workspace_permission_query = RallyAPI::RallyQuery.new()
+        workspace_permission_query      = RallyAPI::RallyQuery.new()
         workspace_permission_query.type = :workspacepermission
         workspace_permission_query.fetch = "Workspace,Name,ObjectID,Role,User"
         workspace_permission_query.page_size = 200 #optional - default is 200
@@ -1642,22 +1652,11 @@ module RallyUserManagement
       use_cache = false
 
       # first try to lookup against cached user list -- much faster than re-querying Rally
-      if $enable_jp_redis_user_cache
-        if @jp_redis_user_cache.exists(user.UserName) then use_cache = true end
-      else
-        if @cached_users != nil then
-          if @cached_users.has_key?(user.UserName) then use_cache = true end
-        end
-      end
+      this_user = user_cache_get(user)
+      if !this_user.nil? then use_cache = true end
 
       # first try to lookup against cached user list -- much faster than re-querying Rally
       if use_cache then
-
-        if $enable_jp_redis_user_cache
-          this_user = @jp_redis_user_cache.get(user.UserName)
-        else
-          this_user = @cached_users[user.UserName]
-        end
 
         # loop through permissions and look to see if there's an existing permission for this
         # workspace, and if so, has it changed
@@ -1767,23 +1766,13 @@ module RallyUserManagement
       use_cache = false
 
       # first try to lookup against cached user list -- much faster than re-querying Rally
-      if $enable_jp_redis_user_cache
-        if @jp_redis_user_cache.exists(user.UserName) then use_cache = true end
-      else
-        if @cached_users != nil then
-          if @cached_users.has_key?(user.UserName) then use_cache = true end
-        end
-      end
+      this_user = user_cache_get(user)
+      if !this_user.nil? then user_cache = true end
 
       # first try to lookup against cached user list -- much faster than re-querying Rally
       if use_cache then
 
         number_matching_projects = 0
-        if $enable_jp_redis_user_cache
-          this_user = @jp_redis_user_cache.get(user.UserName)
-        else
-          this_user = @cached_users[user.UserName]
-        end
 
         # loop through permissions and look to see if there's an existing permission for this
         # workspace, and if so, is our proposed change an upgrade
@@ -1874,23 +1863,13 @@ module RallyUserManagement
       use_cache = false
 
       # first try to lookup against cached user list -- much faster than re-querying Rally
-      if $enable_jp_redis_user_cache
-        if @jp_redis_user_cache.exists(user.UserName) then use_cache = true end
-      else
-        if @cached_users != nil then
-          if @cached_users.has_key?(user.UserName) then use_cache = true end
-        end
-      end
+      this_user = user_cache_get(user)
+      if !this_user.nil? then use_cache = true end
 
       # first try to lookup against cached user list -- much faster than re-querying Rally
       if use_cache then
 
         number_matching_workspaces = 0
-        if $enable_jp_redis_user_cache
-          this_user = @jp_redis_user_cache.get(user.UserName)
-        else
-          this_user = @cached_users[user.UserName]
-        end
 
         # loop through permissions and look to see if there's an existing permission for this
         # workspace, and if so, has it changed
@@ -1963,21 +1942,11 @@ module RallyUserManagement
       use_cache = false
 
       # first try to lookup against cached user list -- much faster than re-querying Rally
-      if $enable_jp_redis_user_cache
-        if @jp_redis_user_cache.exists(user.UserName) then use_cache = true end
-      else
-        if @cached_users != nil then
-          if @cached_users.has_key?(user.UserName) then use_cache = true end
-        end
-      end
+      this_user = user_cache_get(user)
+      if !this_user.nil? then use_cache = true end
 
       if use_cache then
         number_matching_projects = 0
-        if $enable_jp_redis_user_cache
-          this_user = @jp_redis_user_cache.get(user.UserName)
-        else
-          this_user = @cached_users[user.UserName]
-        end
 
         # loop through permissions and look to see if there's an existing permission for this
         # workspace, and if so, has it changed
@@ -2041,23 +2010,13 @@ module RallyUserManagement
       use_cache = false
 
       # first try to lookup against cached user list -- much faster than re-querying Rally
-      if $enable_jp_redis_user_cache
-        if @jp_redis_user_cache.exists(user.UserName) then use_cache = true end
-      else
-        if @cached_users != nil then
-          if @cached_users.has_key?(user.UserName) then use_cache = true end
-        end
-      end
+      this_user = user_cache_get(user)
+      if !this_user.nil? then use_cache = true end
 
       # first try to lookup against cached user list -- much faster than re-querying Rally
       if use_cache then
 
         number_matching_workspaces = 0
-        if $enable_jp_redis_user_cache
-          this_user = @jp_redis_user_cache.get(user.UserName)
-        else
-          this_user = @cached_users[user.UserName]
-        end
 
         # loop through permissions and look to see if there's an existing permission for this
         # workspace, and if so, has it changed
