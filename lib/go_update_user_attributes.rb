@@ -385,7 +385,7 @@ def go_update_user_attributes(input_file)
   if $enable_user_cache
     @logger.info "Caching user list..."
     @uh.cache_users()
-    $user_permissions_cache = @uh.get_cached_users()
+    $user_permissions_cache = @uh.user_cache_get_all()
   end
 
   # Workspace and Project caches
