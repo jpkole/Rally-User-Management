@@ -1,4 +1,8 @@
+<<<<<<< HEAD
 $my_base_url                = 'https://rally1.rallydev.com/slm'
+=======
+$my_base_url                = 'https://sandbox.rallydev.com/slm'
+>>>>>>> upstream/master
 $my_username                = 'user@acme.com'
 $my_password                = 'TopSecret'
 
@@ -63,9 +67,15 @@ $enable_user_cache          = false
 # Description:
 #   This parameter will override the "$enable_user_cache" parameter above.
 #   When set to true, it will cache users using the "http://redis.io/"
+<<<<<<< HEAD
 #   utility instead of just using a Ruby hash.
 #   NOTE: The REDIS.IO process must being running: see file Redis-how-to.txt
 #  
+=======
+#   utility instead of just using a Ruby hash.  This requires:
+#   	1) gem install redis
+#	2) the redis server to be running (see instructions from website)
+>>>>>>> upstream/master
 $enable_jp_redis_user_cache = false
 # ----------------------------------------------------------------------
 # Parameter:
