@@ -1,5 +1,7 @@
+.project
 redis-3.2.0*
 lib/_cached_projects.txt
 lib/_cached_subscription.txt
 lib/_cached_workspaces.txt
 update_project_permissions.log
+log/*
