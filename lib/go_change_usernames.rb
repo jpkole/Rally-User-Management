@@ -30,7 +30,7 @@ $my_base_url                   = "https://rally1.rallydev.com/slm"
 
 $my_username                   = "user@company.com"
 $my_password                   = "password"
-$wsapi_version                 = "1.43"
+$wsapi_version                 = "v2.0"
 
 # Mode options:
 # :usernameandemail => resets both UserName and Email to the updated value
