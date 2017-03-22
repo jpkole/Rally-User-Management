@@ -1,15 +1,16 @@
-01) I went here: "http://redis.io/" and downloaded "redis-3.2.0.tar.gz" (or do next step).
+Date: 14-Mar-2017
+
+01) I went here: "http://redis.io/" and downloaded "redis-3.2.8.tar.gz" (or do next step).
 
 02) I went here for some basic instructions: "http://redis.io/download", which were:
-        wget -c http://download.redis.io/releases/redis-3.2.0.tar.gz
-        tar xzf redis-3.2.0.tar.gz
-        cd redis-3.2.0
+        wget -c http://download.redis.io/releases/redis-3.2.8.tar.gz
+        tar xzf redis-3.2.8.tar.gz
+        cd redis-3.2.8
         make
         
 03) Now the Redis server is built, and we can start it:
-        src/redis-server
-
-    Note: On my MAC a pop-up windows appears asking if I want to allow Redis to accept connections.
-          I said it was OK.
+        src/redis-server &
 
 04) Now Redis is ready.
+
+#[end]#
